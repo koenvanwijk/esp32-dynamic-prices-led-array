@@ -12,15 +12,22 @@ The project runs in the **Wokwi ESP32 simulator** and fetches live Dutch hourly 
 
 ## Simulator
 
-Open/import this GitHub project in Wokwi:
+Wokwi's `/projects/new/esp32?template=...` URL only selects a built-in board template; it does **not** import arbitrary GitHub repos. Use one of these options instead:
 
-<https://wokwi.com/projects/new/esp32?template=https://github.com/koenvanwijk/esp32-dynamic-prices-led-array>
+### Option A: download ZIP and open in Wokwi/VS Code
 
-If that template import does not auto-load in your browser, open <https://wokwi.com/projects/new/esp32> and copy these files in manually:
+1. Download the repo ZIP from GitHub:
+   <https://github.com/koenvanwijk/esp32-dynamic-prices-led-array/archive/refs/heads/main.zip>
+2. Open it with the Wokwi VS Code extension or copy the files into a new Wokwi project.
 
-- `sketch.ino`
-- `diagram.json`
-- `libraries.txt`
+### Option B: manual browser copy
+
+1. Open <https://wokwi.com/projects/new/esp32>
+2. Replace/add these files from this repo:
+   - `sketch.ino`
+   - `diagram.json`
+   - `libraries.txt`
+3. Start the simulation.
 
 ## Live prices
 
