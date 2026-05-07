@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "author": "Hermes Agent",
+  "editor": "wokwi",
+  "parts": [
+    { "type": "wokwi-esp32-devkit-v1", "id": "esp", "top": -2.5, "left": -206.6, "attrs": {} },
+    {
+      "type": "wokwi-neopixel-matrix",
+      "id": "matrix",
+      "top": -42,
+      "left": 60,
+      "attrs": {
+        "pixleate": "1",
+        "rows": "10",
+        "cols": "10",
+        "pin": "5"
+      }
+    }
+  ],
+  "connections": [
+    [ "esp:TX0", "$serialMonitor:RX", "", [] ],
+    [ "esp:RX0", "$serialMonitor:TX", "", [] ],
+    [ "esp:D5", "matrix:DIN", "green", [ "h32" ] ],
+    [ "esp:3V3", "matrix:VCC", "red", [ "h16", "v-34" ] ],
+    [ "esp:GND.1", "matrix:GND", "black", [ "h24", "v46" ] ]
+  ],
+  "dependencies": {}
+}
