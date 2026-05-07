@@ -1,10 +1,14 @@
 #include <Arduino.h>
 #include <Adafruit_NeoPixel.h>
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+#include <time.h>
 #include <math.h>
 
-// ESP32 + 10x10 WS2812/NeoPixel matrix demo for dynamic electricity prices.
-// Wokwi simulation: mocked NL day-ahead prices. Real API integration can later
-// fill `prices` via WiFi/HTTP and NTP.
+// ESP32 + 10x10 WS2812/NeoPixel matrix for dynamic electricity prices.
+// Wokwi simulation uses its built-in "Wokwi-GUEST" WiFi network and fetches
+// Dutch hourly electricity prices from EnergyZero's public API.
 
 #define LED_PIN 5
 #define MATRIX_W 10
@@ -12,10 +16,13 @@
 #define NUM_LEDS (MATRIX_W * MATRIX_H)
 #define BRIGHTNESS 80
 
+#define WIFI_SSID "Wokwi-GUEST"
+#define WIFI_PASSWORD ""
+#define TZ_INFO "CET-1CEST,M3.5.0,M10.5.0/3" // Europe/Amsterdam
+
 Adafruit_NeoPixel pixels(NUM_LEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
 
-// Example hourly €/kWh prices for a day. Includes a negative-price dip and
-// evening peak so the matrix immediately shows useful variation in simulation.
+// Fallback hourly €/kWh prices. Used until live prices are fetched, or if WiFi/API fails.
 float prices[24] = {
   0.19, 0.17, 0.15, 0.14, 0.13, 0.16,
   0.24, 0.31, 0.34, 0.27, 0.18, 0.08,
@@ -23,14 +30,14 @@ float prices[24] = {
   0.46, 0.42, 0.33, 0.28, 0.24, 0.21
 };
 
+bool livePricesLoaded = false;
 uint32_t lastFrame = 0;
+uint32_t lastFetchAttempt = 0;
 uint8_t currentHour = 0;
 
 uint16_t xy(uint8_t x, uint8_t y) {
   // Serpentine matrix mapping, origin bottom-left for graph drawing.
-  if (y % 2 == 0) {
-    return y * MATRIX_W + x;
-  }
+  if (y % 2 == 0) return y * MATRIX_W + x;
   return y * MATRIX_W + (MATRIX_W - 1 - x);
 }
 
@@ -81,15 +88,145 @@ void drawPriceBars() {
       pixels.setPixelColor(xy(x, y), priceColor(prices[hour], now));
     }
 
-    // A dim white dot at the top of the current hour makes "now" obvious.
+    // A white dot at the top of the current hour makes "now" obvious.
     if (now) pixels.setPixelColor(xy(x, MATRIX_H - 1), rgb(255, 255, 255));
   }
 
   pixels.show();
 }
 
+void showWifiProgress(uint8_t step) {
+  clearMatrix();
+  for (uint8_t i = 0; i <= step && i < MATRIX_W; i++) {
+    pixels.setPixelColor(xy(i, 0), rgb(0, 0, 80));
+  }
+  pixels.show();
+}
+
+void updateCurrentHourFromClock() {
+  struct tm timeinfo;
+  if (getLocalTime(&timeinfo, 100)) {
+    currentHour = timeinfo.tm_hour;
+  }
+}
+
+String isoDate(time_t t) {
+  struct tm tmUtc;
+  gmtime_r(&t, &tmUtc);
+  char buf[25];
+  strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S.000Z", &tmUtc);
+  return String(buf);
+}
+
+bool connectWiFi() {
+  Serial.print("Connecting to WiFi: ");
+  Serial.println(WIFI_SSID);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
+  for (uint8_t i = 0; i < 30 && WiFi.status() != WL_CONNECTED; i++) {
+    showWifiProgress(i % MATRIX_W);
+    delay(250);
+    Serial.print('.');
+  }
+  Serial.println();
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.print("WiFi connected, IP: ");
+    Serial.println(WiFi.localIP());
+    return true;
+  }
+
+  Serial.println("WiFi failed; using fallback prices.");
+  return false;
+}
+
+bool syncClock() {
+  configTzTime(TZ_INFO, "pool.ntp.org", "time.google.com");
+  Serial.print("Syncing NTP time");
+  for (uint8_t i = 0; i < 40; i++) {
+    struct tm timeinfo;
+    if (getLocalTime(&timeinfo, 250)) {
+      currentHour = timeinfo.tm_hour;
+      Serial.println();
+      Serial.print("Local hour: ");
+      Serial.println(currentHour);
+      return true;
+    }
+    Serial.print('.');
+  }
+  Serial.println(" failed; simulated hour will advance from fallback value.");
+  return false;
+}
+
+bool fetchLivePrices() {
+  if (WiFi.status() != WL_CONNECTED) return false;
+
+  time_t now = time(nullptr);
+  if (now < 1700000000) {
+    Serial.println("Clock not set; cannot build EnergyZero date range.");
+    return false;
+  }
+
+  struct tm local;
+  localtime_r(&now, &local);
+  local.tm_hour = 0;
+  local.tm_min = 0;
+  local.tm_sec = 0;
+  time_t startLocal = mktime(&local);
+  time_t endLocal = startLocal + 24 * 60 * 60;
+
+  String url = "https://api.energyzero.nl/v1/energyprices?fromDate=" + isoDate(startLocal) +
+               "&tillDate=" + isoDate(endLocal) +
+               "&interval=4&usageType=1&inclBtw=true";
+
+  Serial.println("Fetching live prices:");
+  Serial.println(url);
+
+  HTTPClient http;
+  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+  http.begin(url);
+  int code = http.GET();
+  if (code != HTTP_CODE_OK) {
+    Serial.print("HTTP failed: ");
+    Serial.println(code);
+    http.end();
+    return false;
+  }
+
+  JsonDocument doc;
+  DeserializationError err = deserializeJson(doc, http.getStream());
+  http.end();
+  if (err) {
+    Serial.print("JSON parse failed: ");
+    Serial.println(err.c_str());
+    return false;
+  }
+
+  JsonArray arr = doc["Prices"].as<JsonArray>();
+  if (arr.size() < 24) {
+    Serial.print("Expected 24 prices, got ");
+    Serial.println(arr.size());
+    return false;
+  }
+
+  for (uint8_t i = 0; i < 24; i++) {
+    prices[i] = arr[i]["price"].as<float>();
+  }
+  livePricesLoaded = true;
+
+  Serial.println("Loaded live EnergyZero prices incl. BTW:");
+  for (uint8_t i = 0; i < 24; i++) {
+    if (i < 10) Serial.print('0');
+    Serial.print(i);
+    Serial.print(":00 ");
+    Serial.println(prices[i], 3);
+  }
+  return true;
+}
+
 void printStatus() {
   float now = prices[currentHour];
+  Serial.print(livePricesLoaded ? "LIVE " : "FALLBACK ");
   Serial.print("Hour ");
   if (currentHour < 10) Serial.print('0');
   Serial.print(currentHour);
@@ -110,16 +247,35 @@ void setup() {
   pixels.show();
 
   Serial.println("ESP32 Dynamic Electricity Prices LED Matrix");
+  Serial.println("Live prices: EnergyZero public API, incl. BTW, Netherlands.");
   Serial.println("10 columns = next 10 hours; bar height/color = price; white top dot = current hour.");
+
+  if (connectWiFi()) {
+    syncClock();
+    fetchLivePrices();
+  }
+
+  updateCurrentHourFromClock();
   printStatus();
   drawPriceBars();
 }
 
 void loop() {
-  // In simulation, advance one hour every 2 seconds so the display visibly changes.
+  // Refresh live prices every hour if possible.
+  if (millis() - lastFetchAttempt > 60UL * 60UL * 1000UL) {
+    lastFetchAttempt = millis();
+    fetchLivePrices();
+  }
+
+  // In Wokwi, update display every 2 seconds. With a valid clock this stays on
+  // the real current hour; otherwise it advances so the demo remains animated.
   if (millis() - lastFrame > 2000) {
     lastFrame = millis();
-    currentHour = (currentHour + 1) % 24;
+    uint8_t before = currentHour;
+    updateCurrentHourFromClock();
+    if (currentHour == before && !livePricesLoaded) {
+      currentHour = (currentHour + 1) % 24;
+    }
     printStatus();
     drawPriceBars();
   }

@@ -2,13 +2,49 @@
 
 Starter project for visualising dynamic electricity prices on a **10×10 WS2812/NeoPixel LED matrix** with an ESP32.
 
-The first version runs in the **Wokwi ESP32 simulator** and uses mocked Dutch day-ahead prices, so the display immediately shows something useful:
+The project runs in the **Wokwi ESP32 simulator** and fetches live Dutch hourly electricity prices from the public EnergyZero API. If WiFi/API/NTP fails, it falls back to built-in demo prices so the display still shows something useful.
 
 - 10 columns = the next 10 hours
 - bar height = relative electricity price
 - colour = price band
 - white dot at top of first column = current hour
 - serial monitor prints the current price and usage advice
+
+## Simulator
+
+Open/import this GitHub project in Wokwi:
+
+<https://wokwi.com/projects/new/esp32?template=https://github.com/koenvanwijk/esp32-dynamic-prices-led-array>
+
+If that template import does not auto-load in your browser, open <https://wokwi.com/projects/new/esp32> and copy these files in manually:
+
+- `sketch.ino`
+- `diagram.json`
+- `libraries.txt`
+
+## Live prices
+
+The sketch uses:
+
+```text
+https://api.energyzero.nl/v1/energyprices
+```
+
+with parameters:
+
+- current local day, Europe/Amsterdam timezone
+- hourly interval
+- electricity usage prices
+- `inclBtw=true`
+
+Wokwi internet uses:
+
+```cpp
+#define WIFI_SSID "Wokwi-GUEST"
+#define WIFI_PASSWORD ""
+```
+
+For a real ESP32, replace those with your own WiFi credentials or move them into a separate non-committed secrets header.
 
 ## Colour legend
 
@@ -20,21 +56,6 @@ The first version runs in the **Wokwi ESP32 simulator** and uses mocked Dutch da
 | `< €0.30/kWh` | normal | yellow/orange |
 | `< €0.40/kWh` | expensive | orange |
 | `>= €0.40/kWh` | very expensive | red |
-
-## Run in Wokwi
-
-1. Open <https://wokwi.com/projects/new/esp32>
-2. Replace/add these files from this repo:
-   - `sketch.ino`
-   - `diagram.json`
-   - `libraries.txt`
-3. Start the simulation.
-
-If this repo is public on GitHub, Wokwi can also import it directly via:
-
-```text
-https://wokwi.com/projects/new/esp32?template=https://github.com/<owner>/<repo>
-```
 
 ## Hardware wiring
 
@@ -48,7 +69,7 @@ https://wokwi.com/projects/new/esp32?template=https://github.com/<owner>/<repo>
 
 ## Next steps
 
-- Add WiFi + NTP time sync.
-- Fetch dynamic prices from a supplier API, Home Assistant, ENTSO-E, or Nord Pool/EPEX source.
-- Replace the mocked `prices[24]` array in `sketch.ino` with live hourly prices.
-- Add display modes: cheapest 3-hour block, current tariff category, or battery/EV charging advice.
+- Add a setup screen/button to switch display modes.
+- Show the cheapest 3-hour block for dishwasher/EV/battery charging.
+- Add Home Assistant/MQTT integration for local energy automation.
+- Add supplier-specific margin/energy-tax corrections if desired.
